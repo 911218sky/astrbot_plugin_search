@@ -96,8 +96,7 @@ HTML 只會回傳壓縮過的預覽，不會無限制塞完整網頁。
 
 ## 注意事項
 
-這個插件優先使用 Python 社群維護的 `ddgs` 搜尋庫，不需要 API key。
-如果 `ddgs`、DuckDuckGo 暫時回空或出現驗證頁，會再嘗試 Bing RSS 備援來源。
+這個插件使用 Python 社群維護的 `ddgs` 搜尋庫，不需要 API key。
 免費端點可能會被限流、出現驗證頁、或暫時沒有結果。插件會避免崩潰，但不能保證每次都有資料。
 
 直接爬 Google 搜尋頁很容易拿到驗證或 JavaScript challenge，不適合當免費穩定端點。
@@ -111,11 +110,5 @@ HTML 只會回傳壓縮過的預覽，不會無限制塞完整網頁。
 它應該自然地說「目前沒有找到可用的相關資料」，不要回 `No results`、`Need retry` 或 `Search failed` 這類工具狀態。
 
 ## 授權與來源
-
-搜尋邏輯改寫自：
-
-```text
-https://github.com/911218sky/free-search-mcp
-```
 
 本專案使用 AGPL-3.0 授權。

@@ -1,47 +1,13 @@
 from astrbot_plugin_search.core.search_engine import (
+    SearchResult,
     WebSearchEngine,
     compact_html_preview,
     extract_page_text,
-    _bing_locale_for_query,
     _ddgs_region_for_query,
     _extract_weather_location,
     _looks_like_weather_query,
     _looks_like_spam_result,
-    parse_bing_rss,
-    parse_duckduckgo_lite,
 )
-
-
-def test_parse_duckduckgo_lite_result():
-    html = """
-    <a class="result-link" href="/l/?uddg=https%3A%2F%2Fexample.com">Example</a>
-    <td class="result-snippet"> Example snippet </td>
-    """
-    results = parse_duckduckgo_lite(html)
-    assert len(results) == 1
-    assert results[0].title == "Example"
-    assert results[0].url == "https://example.com"
-    assert results[0].snippet == "Example snippet"
-
-
-def test_parse_bing_rss_result():
-    xml = """
-    <rss version="2.0">
-      <channel>
-        <item>
-          <title>Example RSS</title>
-          <link>https://example.com/rss</link>
-          <description>Example &lt;b&gt;RSS&lt;/b&gt; snippet</description>
-        </item>
-      </channel>
-    </rss>
-    """
-    results = parse_bing_rss(xml)
-    assert len(results) == 1
-    assert results[0].title == "Example RSS"
-    assert results[0].url == "https://example.com/rss"
-    assert results[0].snippet == "Example RSS snippet"
-    assert results[0].source == "bing_rss"
 
 
 def test_ddgs_result_conversion(monkeypatch):
@@ -83,21 +49,36 @@ def test_ddgs_result_conversion(monkeypatch):
 def test_search_locale_helpers_and_spam_filter():
     assert _ddgs_region_for_query("南昌 美食") == "cn-zh"
     assert _ddgs_region_for_query("Nanchang restaurants") == "us-en"
-    assert _bing_locale_for_query("南昌 美食")["mkt"] == "zh-CN"
-    assert _bing_locale_for_query("Nanchang restaurants")["mkt"] == "en-US"
     assert _looks_like_spam_result("x", "https://www.linkedin.com/jobs/foo", "约炮")
     assert not _looks_like_spam_result("Tripadvisor", "https://example.com", "餐廳推薦")
+
+
+def test_search_sync_uses_ddgs_and_dedupes(monkeypatch):
+    engine = WebSearchEngine(user_agent="test")
+
+    def fake_ddgs_text(query, timeout, limit):
+        assert query == "南昌 美食"
+        assert timeout == 3
+        assert limit == 2
+        return [
+            SearchResult("A", "https://example.com/a", "one"),
+            SearchResult("A duplicate", "https://example.com/a", "two"),
+            SearchResult("B", "https://example.com/b", "three"),
+        ]
+
+    monkeypatch.setattr(engine, "_ddgs_text", fake_ddgs_text)
+    results = engine.search_sync(" 南昌 美食 ", limit=2, timeout=3)
+    assert [item["title"] for item in results] == ["A", "B"]
 
 
 def test_search_result_snippet_is_trimmed():
     engine = WebSearchEngine(user_agent="test", max_snippet_chars=5)
     item = engine._result_to_dict(
-        parse_duckduckgo_lite(
-            """
-            <a class="result-link" href="https://example.com">Example</a>
-            <td class="result-snippet">123456789</td>
-            """
-        )[0]
+        SearchResult(
+            title="Example",
+            url="https://example.com",
+            snippet="123456789",
+        )
     )
     assert item["snippet"] == "12345"
 
