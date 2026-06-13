@@ -80,13 +80,8 @@ HTML 只會回傳壓縮過的預覽，不會無限制塞完整網頁。
 - `enable_llm_tool`：是否讓 AI 自動使用 `web_search`。
 - `enable_command`：是否啟用 `/search` 指令。
 - `default_limit`：預設搜尋幾筆結果。
-- `timeout_seconds`：搜尋和抓網頁的逾時秒數。
-- `max_snippet_chars`：每筆搜尋摘要最多回傳多少字。
 - `enable_page_fetch`：是否允許 AI 抓搜尋結果頁面內容。
 - `default_fetch_pages`：最多抓幾個搜尋結果頁面。
-- `max_page_chars`：每個網頁最多回傳多少文字。
-- `max_html_chars`：每個網頁最多回傳多少 HTML 預覽。
-- `prompt_injection_guard`：隱藏疑似提示注入的內容。
 
 ## Token 消耗
 

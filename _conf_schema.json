@@ -24,36 +24,6 @@
         },
         "default": 5
       },
-      "timeout_seconds": {
-        "description": "搜尋逾時秒數",
-        "type": "float",
-        "slider": {
-          "min": 1,
-          "max": 30,
-          "step": 1
-        },
-        "default": 10
-      },
-      "max_query_chars": {
-        "description": "搜尋關鍵字最大字數",
-        "type": "int",
-        "slider": {
-          "min": 20,
-          "max": 1000,
-          "step": 10
-        },
-        "default": 300
-      },
-      "max_snippet_chars": {
-        "description": "每筆摘要最大字數",
-        "type": "int",
-        "slider": {
-          "min": 80,
-          "max": 2000,
-          "step": 20
-        },
-        "default": 500
-      },
       "enable_page_fetch": {
         "description": "允許 AI 抓取搜尋結果頁面內容",
         "hint": "開啟後 AI 可在需要時讀取網頁文字；會比只看摘要更消耗 token",
@@ -69,38 +39,6 @@
           "step": 1
         },
         "default": 2
-      },
-      "max_page_chars": {
-        "description": "每個網頁文字最大字數",
-        "type": "int",
-        "slider": {
-          "min": 200,
-          "max": 20000,
-          "step": 200
-        },
-        "default": 4000
-      },
-      "max_html_chars": {
-        "description": "每個網頁 HTML 預覽最大字數",
-        "hint": "只有 AI 呼叫 include_html=true 時才會回傳",
-        "type": "int",
-        "slider": {
-          "min": 0,
-          "max": 10000,
-          "step": 200
-        },
-        "default": 2000
-      },
-      "user_agent": {
-        "description": "HTTP User-Agent",
-        "hint": "可填你的部署識別；不要偽裝瀏覽器或規避限制",
-        "type": "string",
-        "default": "astrbot-plugin-search/0.2.1 (+https://github.com/911218sky/astrbot_plugin_search)"
-      },
-      "prompt_injection_guard": {
-        "description": "隱藏疑似提示注入摘要",
-        "type": "bool",
-        "default": true
       }
     }
   }
