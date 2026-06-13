@@ -2,6 +2,8 @@ from astrbot_plugin_search.core.search_engine import (
     WebSearchEngine,
     compact_html_preview,
     extract_page_text,
+    _extract_weather_location,
+    _looks_like_weather_query,
     parse_duckduckgo_lite,
 )
 
@@ -47,3 +49,10 @@ def test_compact_html_preview_keeps_useful_structure():
     assert "<article>" in preview
     assert '<a href="https://example.com">' in preview
     assert "Title" in preview
+
+
+def test_weather_query_detection_and_location_alias():
+    assert _looks_like_weather_query("current weather Taipei")
+    assert _looks_like_weather_query("台北今天天氣")
+    assert _extract_weather_location("current weather Taipei") == "Taipei"
+    assert _extract_weather_location("台北今天天氣") == "Taipei"

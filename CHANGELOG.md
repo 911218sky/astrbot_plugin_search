@@ -2,6 +2,7 @@
 
 ## v0.2.0
 
+- 新增天氣查詢 fallback，DuckDuckGo 回空時仍可回答 `Taipei weather`、`台北天氣` 這類問題。
 - 新增 `include_pages`，AI 需要時可以讀取搜尋結果網頁文字。
 - 新增 `include_html`，必要時可回傳少量 HTML 預覽。
 - 新增頁面抓取長度與頁數設定，避免 token 消耗失控。

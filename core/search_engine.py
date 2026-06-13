@@ -14,6 +14,70 @@ from typing import Any, Iterable
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_LIMIT = 10
 HTML_PREVIEW_ATTRS = {"href", "src", "alt", "title", "name", "content"}
+WEATHER_TERMS = (
+    "weather",
+    "temperature",
+    "forecast",
+    "天氣",
+    "天气",
+    "氣溫",
+    "气温",
+    "預報",
+    "预报",
+)
+WEATHER_STOP_WORDS = {
+    "current",
+    "now",
+    "today",
+    "tomorrow",
+    "weather",
+    "temperature",
+    "forecast",
+    "june",
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+    "今日",
+    "今天",
+    "明天",
+    "現在",
+    "现在",
+    "目前",
+    "天氣",
+    "天气",
+    "氣溫",
+    "气温",
+    "幾度",
+    "几度",
+}
+WEATHER_LOCATION_ALIASES = {
+    "台北": "Taipei",
+    "臺北": "Taipei",
+    "台北市": "Taipei",
+    "臺北市": "Taipei",
+    "taipei": "Taipei",
+    "東京": "Tokyo",
+    "tokyo": "Tokyo",
+    "大阪": "Osaka",
+    "osaka": "Osaka",
+    "香港": "Hong Kong",
+    "hong kong": "Hong Kong",
+    "首爾": "Seoul",
+    "seoul": "Seoul",
+    "紐約": "New York",
+    "new york": "New York",
+    "洛杉磯": "Los Angeles",
+    "los angeles": "Los Angeles",
+}
 
 
 @dataclass(slots=True)
@@ -70,6 +134,17 @@ class WebSearchEngine:
         capped_limit = max(1, min(limit, MAX_LIMIT))
         results: list[SearchResult] = []
         seen: set[str] = set()
+
+        if _looks_like_weather_query(cleaned_query):
+            try:
+                self._append_unique(
+                    results,
+                    seen,
+                    self._weather_result(cleaned_query, timeout),
+                    capped_limit,
+                )
+            except Exception:
+                pass
 
         try:
             instant_answer, related_topics = self._duckduckgo_instant_answer(
@@ -204,6 +279,34 @@ class WebSearchEngine:
         html = self._fetch_text(f"https://lite.duckduckgo.com/lite/?{params}", timeout)
         yield from parse_duckduckgo_lite(html)
 
+    def _weather_result(self, query: str, timeout: float) -> SearchResult:
+        location = _extract_weather_location(query)
+        params = urllib.parse.urlencode({"format": "j1"})
+        data = self._fetch_json(
+            f"https://wttr.in/{urllib.parse.quote(location)}?{params}", timeout
+        )
+        current = _first_dict(data.get("current_condition"))
+        area = _weather_area_name(data, location)
+        desc = _first_value(current.get("weatherDesc")) or "unknown"
+        temp_c = current.get("temp_C", "?")
+        feels_c = current.get("FeelsLikeC", "?")
+        humidity = current.get("humidity", "?")
+        wind_kmph = current.get("windspeedKmph", "?")
+        precip_mm = current.get("precipMM", "?")
+        observed = current.get("observation_time", "")
+        snippet = (
+            f"{area} current weather: {desc}, {temp_c}°C, feels like {feels_c}°C, "
+            f"humidity {humidity}%, wind {wind_kmph} km/h, precipitation {precip_mm} mm."
+        )
+        if observed:
+            snippet += f" Observation time: {observed} UTC."
+        return SearchResult(
+            title=f"Current weather for {area}",
+            url=f"https://wttr.in/{urllib.parse.quote(location)}",
+            snippet=snippet,
+            source="wttr_in",
+        )
+
     def _fetch_json(self, url: str, timeout: float) -> dict[str, Any]:
         text = self._fetch_text(url, timeout)
         data = json.loads(text)
@@ -247,6 +350,54 @@ def compact_html_preview(html: str) -> str:
     parser.feed(html)
     parser.close()
     return "\n".join(line for line in parser.lines if line).strip()
+
+
+def _looks_like_weather_query(query: str) -> bool:
+    lowered = query.lower()
+    return any(term in lowered for term in WEATHER_TERMS)
+
+
+def _extract_weather_location(query: str) -> str:
+    lowered = query.lower()
+    for alias, location in WEATHER_LOCATION_ALIASES.items():
+        if alias in lowered or alias in query:
+            return location
+
+    words = re.findall(r"[A-Za-z\u4e00-\u9fff]+", query)
+    candidates = [
+        word
+        for word in words
+        if word.lower() not in WEATHER_STOP_WORDS and not word.isdigit()
+    ]
+    if candidates:
+        return " ".join(candidates[:3])
+    return query
+
+
+def _weather_area_name(data: dict[str, Any], fallback: str) -> str:
+    nearest_area = _first_dict(data.get("nearest_area"))
+    area_name = _first_value(nearest_area.get("areaName"))
+    country = _first_value(nearest_area.get("country"))
+    region = _first_value(nearest_area.get("region"))
+    parts = [part for part in (area_name, region, country) if part]
+    return ", ".join(parts) if parts else fallback
+
+
+def _first_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return value[0]
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _first_value(value: Any) -> str:
+    if isinstance(value, list) and value:
+        item = value[0]
+        if isinstance(item, dict):
+            return _clean_text(str(item.get("value") or ""))
+        return _clean_text(str(item))
+    return _clean_text(str(value or ""))
 
 
 class _DuckDuckGoLiteParser(HTMLParser):
