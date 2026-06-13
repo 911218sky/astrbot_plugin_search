@@ -1,0 +1,7 @@
+name: astrbot_plugin_search
+display_name: 聯網搜尋 Sky
+desc: 免費聯網搜尋工具，提供 /search 指令與 AI 可自行呼叫的 web_search 工具
+version: v0.2.0
+author: 911218sky
+repo: https://github.com/911218sky/astrbot_plugin_search
+astrbot_version: ">=4.10.4"

@@ -1,0 +1,426 @@
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+import json
+import re
+import urllib.parse
+import urllib.request
+from dataclasses import asdict, dataclass
+from html import unescape
+from html.parser import HTMLParser
+from typing import Any, Iterable
+
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_LIMIT = 10
+HTML_PREVIEW_ATTRS = {"href", "src", "alt", "title", "name", "content"}
+
+
+@dataclass(slots=True)
+class SearchResult:
+    title: str
+    url: str
+    snippet: str = ""
+    source: str = "duckduckgo"
+
+
+class WebSearchEngine:
+    """DuckDuckGo search engine adapted from 911218sky/free-search-mcp."""
+
+    def __init__(self, *, user_agent: str, max_snippet_chars: int = 500) -> None:
+        self.user_agent = user_agent
+        self.max_snippet_chars = max_snippet_chars
+
+    async def search(
+        self, query: str, *, limit: int = 5, timeout: float = 10.0
+    ) -> list[dict[str, str]]:
+        return await asyncio.to_thread(
+            self.search_sync, query=query, limit=limit, timeout=timeout
+        )
+
+    async def enrich_results(
+        self,
+        results: list[dict[str, str]],
+        *,
+        timeout: float = 10.0,
+        max_pages: int = 3,
+        max_page_chars: int = 4000,
+        include_html: bool = False,
+        max_html_chars: int = 2000,
+    ) -> list[dict[str, str]]:
+        return await asyncio.to_thread(
+            self.enrich_results_sync,
+            results=results,
+            timeout=timeout,
+            max_pages=max_pages,
+            max_page_chars=max_page_chars,
+            include_html=include_html,
+            max_html_chars=max_html_chars,
+        )
+
+    def search_sync(
+        self, query: str, *, limit: int = 5, timeout: float = 10.0
+    ) -> list[dict[str, str]]:
+        cleaned_query = query.strip()
+        if not cleaned_query:
+            raise ValueError("query must not be empty")
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero")
+
+        capped_limit = max(1, min(limit, MAX_LIMIT))
+        results: list[SearchResult] = []
+        seen: set[str] = set()
+
+        try:
+            instant_answer, related_topics = self._duckduckgo_instant_answer(
+                cleaned_query, timeout
+            )
+        except Exception:
+            instant_answer, related_topics = [], []
+
+        for result in instant_answer:
+            self._append_unique(results, seen, result, capped_limit)
+
+        if len(results) < capped_limit:
+            for result in self._duckduckgo_lite(cleaned_query, timeout):
+                self._append_unique(results, seen, result, capped_limit)
+                if len(results) >= capped_limit:
+                    break
+
+        if len(results) < capped_limit:
+            for result in related_topics:
+                self._append_unique(results, seen, result, capped_limit)
+                if len(results) >= capped_limit:
+                    break
+
+        return [self._result_to_dict(result) for result in results[:capped_limit]]
+
+    def enrich_results_sync(
+        self,
+        results: list[dict[str, str]],
+        *,
+        timeout: float = 10.0,
+        max_pages: int = 3,
+        max_page_chars: int = 4000,
+        include_html: bool = False,
+        max_html_chars: int = 2000,
+    ) -> list[dict[str, str]]:
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero")
+
+        capped_pages = max(0, min(int(max_pages), MAX_LIMIT))
+        capped_text_chars = max(200, min(int(max_page_chars), 20000))
+        capped_html_chars = max(0, min(int(max_html_chars), 10000))
+
+        enriched: list[dict[str, str]] = [dict(item) for item in results]
+        fetched = 0
+        for item in enriched:
+            if fetched >= capped_pages:
+                break
+            url = item.get("url", "")
+            if not _is_fetchable_page_url(url):
+                item["page_error"] = "unsupported or private URL"
+                continue
+
+            try:
+                html = self._fetch_text(url, timeout)
+            except Exception as exc:
+                item["page_error"] = str(exc)
+                fetched += 1
+                continue
+
+            page_text = extract_page_text(html)[:capped_text_chars].rstrip()
+            if page_text:
+                item["page_text"] = page_text
+            if include_html and capped_html_chars:
+                item["page_html"] = compact_html_preview(html)[:capped_html_chars].rstrip()
+            fetched += 1
+        return enriched
+
+    def _append_unique(
+        self,
+        results: list[SearchResult],
+        seen: set[str],
+        result: SearchResult,
+        limit: int,
+    ) -> None:
+        key = result.url or result.title
+        if (
+            not key
+            or key in seen
+            or len(results) >= limit
+            or not _is_supported_result_url(result.url)
+        ):
+            return
+        seen.add(key)
+        results.append(result)
+
+    def _duckduckgo_instant_answer(
+        self, query: str, timeout: float
+    ) -> tuple[list[SearchResult], list[SearchResult]]:
+        params = urllib.parse.urlencode(
+            {
+                "q": query,
+                "format": "json",
+                "no_html": "1",
+                "skip_disambig": "1",
+            }
+        )
+        data = self._fetch_json(f"https://api.duckduckgo.com/?{params}", timeout)
+
+        instant_answer: list[SearchResult] = []
+        related_topics: list[SearchResult] = []
+
+        heading = _clean_text(str(data.get("Heading") or ""))
+        abstract = _clean_text(str(data.get("AbstractText") or data.get("Abstract") or ""))
+        abstract_url = _clean_url(str(data.get("AbstractURL") or ""))
+        if heading and abstract_url:
+            instant_answer.append(
+                SearchResult(
+                    title=heading,
+                    url=abstract_url,
+                    snippet=abstract,
+                    source="duckduckgo_instant_answer",
+                )
+            )
+
+        for topic in _flatten_related_topics(data.get("RelatedTopics", [])):
+            title = _clean_text(str(topic.get("Text") or topic.get("FirstURL") or ""))
+            url = _clean_url(str(topic.get("FirstURL") or ""))
+            if title and url:
+                related_topics.append(
+                    SearchResult(
+                        title=title,
+                        url=url,
+                        snippet=title,
+                        source="duckduckgo_related_topic",
+                    )
+                )
+
+        return instant_answer, related_topics
+
+    def _duckduckgo_lite(self, query: str, timeout: float) -> Iterable[SearchResult]:
+        params = urllib.parse.urlencode({"q": query})
+        html = self._fetch_text(f"https://lite.duckduckgo.com/lite/?{params}", timeout)
+        yield from parse_duckduckgo_lite(html)
+
+    def _fetch_json(self, url: str, timeout: float) -> dict[str, Any]:
+        text = self._fetch_text(url, timeout)
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("search provider returned non-object JSON")
+        return data
+
+    def _fetch_text(self, url: str, timeout: float) -> str:
+        request = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise ValueError(
+                    f"search provider response exceeded {MAX_RESPONSE_BYTES} bytes"
+                )
+            return body.decode(charset, errors="replace")
+
+    def _result_to_dict(self, result: SearchResult) -> dict[str, str]:
+        item = asdict(result)
+        item["snippet"] = item["snippet"][: self.max_snippet_chars].rstrip()
+        return item
+
+
+def parse_duckduckgo_lite(html: str) -> list[SearchResult]:
+    parser = _DuckDuckGoLiteParser()
+    parser.feed(html)
+    parser.close()
+    return parser.results
+
+
+def extract_page_text(html: str) -> str:
+    parser = _ReadableHTMLParser()
+    parser.feed(html)
+    parser.close()
+    return _clean_text(" ".join(parser.text_parts))
+
+
+def compact_html_preview(html: str) -> str:
+    parser = _HTMLPreviewParser()
+    parser.feed(html)
+    parser.close()
+    return "\n".join(line for line in parser.lines if line).strip()
+
+
+class _DuckDuckGoLiteParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: list[SearchResult] = []
+        self._in_link = False
+        self._in_snippet = False
+        self._current_url = ""
+        self._current_title: list[str] = []
+        self._pending_result: SearchResult | None = None
+        self._snippet_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = {key: value or "" for key, value in attrs}
+        class_name = attrs_dict.get("class", "")
+
+        if tag == "a" and "result-link" in class_name:
+            self._finish_pending()
+            self._in_link = True
+            self._current_url = _clean_url(attrs_dict.get("href", ""))
+            self._current_title = []
+            return
+
+        if tag == "td" and "result-snippet" in class_name and self._pending_result:
+            self._in_snippet = True
+            self._snippet_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._in_link:
+            self._current_title.append(data)
+        elif self._in_snippet:
+            self._snippet_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._in_link:
+            title = _clean_text(" ".join(self._current_title))
+            if title and self._current_url and _is_supported_result_url(self._current_url):
+                self._pending_result = SearchResult(
+                    title=title,
+                    url=self._current_url,
+                    source="duckduckgo_lite",
+                )
+            self._in_link = False
+            return
+
+        if tag == "td" and self._in_snippet and self._pending_result:
+            self._pending_result.snippet = _clean_text(" ".join(self._snippet_parts))
+            self._finish_pending()
+            self._in_snippet = False
+
+    def close(self) -> None:
+        super().close()
+        self._finish_pending()
+
+    def _finish_pending(self) -> None:
+        if self._pending_result:
+            self.results.append(self._pending_result)
+            self._pending_result = None
+
+
+class _ReadableHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.text_parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript", "svg", "canvas"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg", "canvas"} and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            cleaned = _clean_text(data)
+            if cleaned:
+                self.text_parts.append(cleaned)
+
+
+class _HTMLPreviewParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.lines: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript", "svg", "canvas"}:
+            self._skip_depth += 1
+            return
+        if self._skip_depth:
+            return
+        kept_attrs = []
+        for key, value in attrs:
+            if key in HTML_PREVIEW_ATTRS and value:
+                kept_attrs.append(f'{key}="{_clean_text(value)}"')
+        attrs_text = f" {' '.join(kept_attrs)}" if kept_attrs else ""
+        self.lines.append(f"<{tag}{attrs_text}>")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg", "canvas"}:
+            if self._skip_depth:
+                self._skip_depth -= 1
+            return
+        if not self._skip_depth and tag in {
+            "title",
+            "h1",
+            "h2",
+            "h3",
+            "p",
+            "li",
+            "a",
+            "article",
+            "section",
+        }:
+            self.lines.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            cleaned = _clean_text(data)
+            if cleaned:
+                self.lines.append(cleaned)
+
+
+def _flatten_related_topics(value: Any) -> Iterable[dict[str, Any]]:
+    if not isinstance(value, list):
+        return
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("Topics"), list):
+            yield from _flatten_related_topics(item["Topics"])
+        else:
+            yield item
+
+
+def _clean_text(value: str) -> str:
+    return re.sub(r"\s+", " ", unescape(value)).strip()
+
+
+def _clean_url(value: str) -> str:
+    url = unescape(value).strip()
+    if url.startswith("//duckduckgo.com/l/?"):
+        url = f"https:{url}"
+    elif url.startswith("/l/?"):
+        url = f"https://duckduckgo.com{url}"
+
+    parsed = urllib.parse.urlparse(url)
+    query = urllib.parse.parse_qs(parsed.query)
+    redirect_target = query.get("uddg", [""])[0]
+    if redirect_target:
+        return redirect_target
+
+    if url.startswith("//"):
+        return f"https:{url}"
+    return url
+
+
+def _is_supported_result_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _is_fetchable_page_url(url: str) -> bool:
+    if not _is_supported_result_url(url):
+        return False
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").strip().lower()
+    if not host or host in {"localhost", "localhost.localdomain"}:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast)
