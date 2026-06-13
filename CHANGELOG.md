@@ -1,5 +1,10 @@
 # 更新紀錄
 
+## v0.2.1
+
+- 精簡 README，移除注意事項段落。
+- 同步版本號，方便確認 AstrBot Docker runtime 已載入新版插件。
+
 ## v0.2.0
 
 - 修正未設定 `user_agent` 時可能拿到非字串預設值，導致搜尋 HTTP header 失敗的問題。

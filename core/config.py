@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-DEFAULT_USER_AGENT = "astrbot-plugin-search/0.2.0 (+https://github.com/911218sky/astrbot_plugin_search)"
+DEFAULT_USER_AGENT = "astrbot-plugin-search/0.2.1 (+https://github.com/911218sky/astrbot_plugin_search)"
 
 
 def _section(config: Any, key: str) -> dict[str, Any]:

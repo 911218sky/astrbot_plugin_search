@@ -18,7 +18,7 @@ _LOG_TAG = "[Search]"
     "astrbot_plugin_search",
     "911218sky",
     "免費聯網搜尋工具，提供 /search 指令與 AI 可自行呼叫的 web_search 工具。",
-    "0.2.0",
+    "0.2.1",
     "https://github.com/911218sky/astrbot_plugin_search",
 )
 class SearchPlugin(Star):

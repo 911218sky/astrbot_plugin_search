@@ -95,7 +95,7 @@
         "description": "HTTP User-Agent",
         "hint": "可填你的部署識別；不要偽裝瀏覽器或規避限制",
         "type": "string",
-        "default": "astrbot-plugin-search/0.2.0 (+https://github.com/911218sky/astrbot_plugin_search)"
+        "default": "astrbot-plugin-search/0.2.1 (+https://github.com/911218sky/astrbot_plugin_search)"
       },
       "prompt_injection_guard": {
         "description": "隱藏疑似提示注入摘要",
