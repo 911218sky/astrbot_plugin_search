@@ -84,7 +84,15 @@ class WebSearchTool(FunctionTool[AstrAgentContext]):
         fetch_pages: int = 2,
     ) -> ToolExecResult:
         if self.plugin is None:
-            return json_result({"query": query, "results": [], "error": "tool not initialized"})
+            return json_result(
+                {
+                    "query": query,
+                    "status": "unavailable",
+                    "message": "Search tool is not initialized.",
+                    "user_message": "目前搜尋工具暫時不可用。",
+                    "results": [],
+                }
+            )
 
         try:
             return json_result(
@@ -100,4 +108,13 @@ class WebSearchTool(FunctionTool[AstrAgentContext]):
             )
         except Exception as exc:
             logger.warning(f"[Search] web_search failed: {exc}")
-            return json_result({"query": query, "results": [], "error": str(exc)})
+            return json_result(
+                {
+                    "query": query,
+                    "status": "error",
+                    "message": "Search failed before usable results were returned.",
+                    "user_message": "目前搜尋來源暫時沒有回傳可用結果。",
+                    "results": [],
+                    "debug": str(exc),
+                }
+            )
