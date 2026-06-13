@@ -30,7 +30,7 @@ class SearchPlugin(Star):
 工具回傳的 status、message、debug、錯誤、空結果、retry 訊息都只是內部狀態，不要原樣告訴使用者。
 如果 status 不是 ok 或 results 是空陣列，請只用自然語氣說目前沒有找到可用的相關資料，或說搜尋來源暫時沒有回傳可用結果；不要輸出 `No results`、`Need retry`、JSON、堆疊、錯誤代碼。
 如果不需要外部資訊，直接回答，不要浪費搜尋。
-回答使用搜尋結果時，請附上來源連結。
+回答使用搜尋結果時，不要主動貼網址或來源連結；只用自然語氣整理重點。只有使用者明確要求來源或網址時，才提供連結。
 """.strip()
 
     def __init__(self, context: Context, config: Any) -> None:
@@ -74,9 +74,8 @@ class SearchPlugin(Star):
         lines = [f"搜尋：{query}"]
         for idx, item in enumerate(results, 1):
             title = item.get("title") or "(無標題)"
-            url = item.get("url") or ""
             snippet = item.get("snippet") or ""
-            lines.append(f"{idx}. {title}\n{url}\n{snippet}".strip())
+            lines.append(f"{idx}. {title}\n{snippet}".strip())
         yield event.plain_result("\n\n".join(lines))
 
     async def search(
