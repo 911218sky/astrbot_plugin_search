@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+DEFAULT_USER_AGENT = "astrbot-plugin-search/0.2.0 (+https://github.com/911218sky/astrbot_plugin_search)"
+
 
 def _section(config: Any, key: str) -> dict[str, Any]:
     if hasattr(config, "get"):
@@ -23,7 +25,7 @@ class SearchConfig:
     default_fetch_pages: int = 2
     max_page_chars: int = 4000
     max_html_chars: int = 2000
-    user_agent: str = "astrbot-plugin-search/0.2.0 (+https://github.com/911218sky/astrbot_plugin_search)"
+    user_agent: str = DEFAULT_USER_AGENT
     prompt_injection_guard: bool = True
 
 
@@ -50,6 +52,6 @@ class ConfigManager:
                 0, min(int(raw.get("max_html_chars", 2000) or 2000), 10000)
             ),
             user_agent=str(raw.get("user_agent", "") or "").strip()
-            or SearchConfig.user_agent,
+            or DEFAULT_USER_AGENT,
             prompt_injection_guard=bool(raw.get("prompt_injection_guard", True)),
         )
