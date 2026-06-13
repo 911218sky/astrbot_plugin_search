@@ -4,6 +4,9 @@
 
 - 修正未設定 `user_agent` 時可能拿到非字串預設值，導致搜尋 HTTP header 失敗的問題。
 - 調整空結果與錯誤回傳格式，避免 AI 把 `No results`、`Need retry` 或內部錯誤原樣回給使用者。
+- 加強提示與工具回傳內容，避免 `Search failed`、`Need search`、重試文字外露給使用者。
+- 新增 `ddgs` 社群搜尋庫作為優先搜尋來源，降低手寫解析搜尋頁造成的失敗率。
+- 新增 Bing RSS 備援搜尋來源，DuckDuckGo 被驗證頁或回空時會自動補查。
 - 搜尋回覆預設不再貼網址；網址只保留給工具內部參考，除非使用者明確要求。
 - 新增天氣查詢 fallback，DuckDuckGo 回空時仍可回答 `Taipei weather`、`台北天氣` 這類問題。
 - 新增 `include_pages`，AI 需要時可以讀取搜尋結果網頁文字。

@@ -6,6 +6,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from html import unescape
 from html.parser import HTMLParser
@@ -78,6 +79,17 @@ WEATHER_LOCATION_ALIASES = {
     "洛杉磯": "Los Angeles",
     "los angeles": "Los Angeles",
 }
+SPAM_TEXT_PATTERNS = (
+    "约炮",
+    "約炮",
+    "海选平台",
+    "援交",
+    "博彩",
+    "娱乐城",
+)
+SPAM_HOST_PARTS = (
+    "linkedin.com/jobs/",
+)
 
 
 @dataclass(slots=True)
@@ -89,7 +101,7 @@ class SearchResult:
 
 
 class WebSearchEngine:
-    """DuckDuckGo search engine adapted from 911218sky/free-search-mcp."""
+    """Free web search with ddgs first, then direct free endpoint fallbacks."""
 
     def __init__(self, *, user_agent: str, max_snippet_chars: int = 500) -> None:
         self.user_agent = user_agent
@@ -146,6 +158,16 @@ class WebSearchEngine:
             except Exception:
                 pass
 
+        if len(results) < capped_limit:
+            try:
+                ddgs_results = self._ddgs_text(cleaned_query, timeout, capped_limit)
+            except Exception:
+                ddgs_results = []
+            for result in ddgs_results:
+                self._append_unique(results, seen, result, capped_limit)
+                if len(results) >= capped_limit:
+                    break
+
         try:
             instant_answer, related_topics = self._duckduckgo_instant_answer(
                 cleaned_query, timeout
@@ -158,6 +180,16 @@ class WebSearchEngine:
 
         if len(results) < capped_limit:
             for result in self._duckduckgo_lite(cleaned_query, timeout):
+                self._append_unique(results, seen, result, capped_limit)
+                if len(results) >= capped_limit:
+                    break
+
+        if len(results) < capped_limit:
+            try:
+                bing_results = self._bing_rss(cleaned_query, timeout)
+            except Exception:
+                bing_results = []
+            for result in bing_results:
                 self._append_unique(results, seen, result, capped_limit)
                 if len(results) >= capped_limit:
                     break
@@ -279,6 +311,50 @@ class WebSearchEngine:
         html = self._fetch_text(f"https://lite.duckduckgo.com/lite/?{params}", timeout)
         yield from parse_duckduckgo_lite(html)
 
+    def _ddgs_text(
+        self, query: str, timeout: float, limit: int
+    ) -> list[SearchResult]:
+        from ddgs import DDGS  # type: ignore[import-not-found]
+
+        region = _ddgs_region_for_query(query)
+        with DDGS(timeout=max(1, int(timeout))) as ddgs:
+            raw_results = ddgs.text(
+                query,
+                region=region,
+                safesearch="moderate",
+                max_results=max(limit, 5),
+            )
+
+        results: list[SearchResult] = []
+        for item in raw_results:
+            title = _clean_text(str(item.get("title") or ""))
+            url = _clean_url(str(item.get("href") or item.get("url") or ""))
+            snippet = _clean_htmlish_text(str(item.get("body") or item.get("snippet") or ""))
+            if title and url and not _looks_like_spam_result(title, url, snippet):
+                results.append(
+                    SearchResult(
+                        title=title,
+                        url=url,
+                        snippet=snippet,
+                        source="ddgs",
+                    )
+                )
+        return results
+
+    def _bing_rss(self, query: str, timeout: float) -> list[SearchResult]:
+        locale = _bing_locale_for_query(query)
+        params = urllib.parse.urlencode(
+            {
+                "q": query,
+                "format": "rss",
+                "mkt": locale["mkt"],
+                "setlang": locale["setlang"],
+                "cc": locale["cc"],
+            }
+        )
+        xml_text = self._fetch_text(f"https://www.bing.com/search?{params}", timeout)
+        return parse_bing_rss(xml_text)
+
     def _weather_result(self, query: str, timeout: float) -> SearchResult:
         location = _extract_weather_location(query)
         params = urllib.parse.urlencode({"format": "j1"})
@@ -338,6 +414,25 @@ def parse_duckduckgo_lite(html: str) -> list[SearchResult]:
     return parser.results
 
 
+def parse_bing_rss(xml_text: str) -> list[SearchResult]:
+    root = ET.fromstring(xml_text)
+    results: list[SearchResult] = []
+    for item in root.findall("./channel/item"):
+        title = _clean_text(item.findtext("title") or "")
+        url = _clean_url(item.findtext("link") or "")
+        snippet = _clean_htmlish_text(item.findtext("description") or "")
+        if title and _is_supported_result_url(url):
+            results.append(
+                SearchResult(
+                    title=title,
+                    url=url,
+                    snippet=snippet,
+                    source="bing_rss",
+                )
+            )
+    return results
+
+
 def extract_page_text(html: str) -> str:
     parser = _ReadableHTMLParser()
     parser.feed(html)
@@ -355,6 +450,20 @@ def compact_html_preview(html: str) -> str:
 def _looks_like_weather_query(query: str) -> bool:
     lowered = query.lower()
     return any(term in lowered for term in WEATHER_TERMS)
+
+
+def _has_cjk(value: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", value))
+
+
+def _ddgs_region_for_query(query: str) -> str:
+    return "cn-zh" if _has_cjk(query) else "us-en"
+
+
+def _bing_locale_for_query(query: str) -> dict[str, str]:
+    if _has_cjk(query):
+        return {"mkt": "zh-CN", "setlang": "zh-CN", "cc": "CN"}
+    return {"mkt": "en-US", "setlang": "en-US", "cc": "US"}
 
 
 def _extract_weather_location(query: str) -> str:
@@ -538,6 +647,17 @@ def _flatten_related_topics(value: Any) -> Iterable[dict[str, Any]]:
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", unescape(value)).strip()
+
+
+def _clean_htmlish_text(value: str) -> str:
+    return _clean_text(re.sub(r"<[^>]+>", " ", value))
+
+
+def _looks_like_spam_result(title: str, url: str, snippet: str) -> bool:
+    combined = f"{title} {url} {snippet}".lower()
+    if any(pattern.lower() in combined for pattern in SPAM_TEXT_PATTERNS):
+        return True
+    return any(part in combined for part in SPAM_HOST_PARTS)
 
 
 def _clean_url(value: str) -> str:

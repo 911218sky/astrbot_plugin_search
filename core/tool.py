@@ -26,7 +26,8 @@ class WebSearchTool(FunctionTool[AstrAgentContext]):
         "Search the web when current or external information is needed. "
         "Use this for latest facts, news, prices, schedules, unfamiliar topics, URLs, "
         "or when the user asks you to search. Do not use it for simple reasoning that "
-        "does not require outside information."
+        "does not require outside information. Tool status and errors are internal; "
+        "never quote retry, failure, or no-results text to the user."
     )
     parameters: dict[str, Any] = field(
         default_factory=lambda: {
@@ -88,7 +89,7 @@ class WebSearchTool(FunctionTool[AstrAgentContext]):
                 {
                     "query": query,
                     "status": "unavailable",
-                    "message": "Search tool is not initialized.",
+                    "message": "目前搜尋工具暫時不可用。",
                     "user_message": "目前搜尋工具暫時不可用。",
                     "results": [],
                 }
@@ -112,9 +113,8 @@ class WebSearchTool(FunctionTool[AstrAgentContext]):
                 {
                     "query": query,
                     "status": "error",
-                    "message": "Search failed before usable results were returned.",
+                    "message": "目前搜尋來源暫時沒有回傳可用結果。",
                     "user_message": "目前搜尋來源暫時沒有回傳可用結果。",
                     "results": [],
-                    "debug": str(exc),
                 }
             )
